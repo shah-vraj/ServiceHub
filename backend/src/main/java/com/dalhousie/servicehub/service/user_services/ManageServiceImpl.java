@@ -1,5 +1,6 @@
 package com.dalhousie.servicehub.service.user_services;
 
+import com.dalhousie.servicehub.config.AwsProperties;
 import com.dalhousie.servicehub.dto.ServiceDto;
 import com.dalhousie.servicehub.exceptions.ServiceNotFoundException;
 import com.dalhousie.servicehub.exceptions.UserNotFoundException;
@@ -13,6 +14,8 @@ import com.dalhousie.servicehub.request.UpdateServiceRequest;
 import com.dalhousie.servicehub.response.GetServicesResponse;
 import com.dalhousie.servicehub.util.ResponseBody;
 import lombok.RequiredArgsConstructor;
+import software.amazon.awssdk.services.sns.SnsClient;
+import software.amazon.awssdk.services.sns.model.*;
 
 import java.util.List;
 
@@ -24,6 +27,8 @@ public class ManageServiceImpl implements ManageService {
     private final ServiceRepository serviceRepository;
     private final UserRepository userRepository;
     private final ServiceMapper serviceMapper;
+    private final SnsClient snsClient;
+    private final AwsProperties awsProperties;
 
     @Override
     public ResponseBody<String> addService(AddServiceRequest addServiceRequest, Long providerId) {
@@ -38,6 +43,7 @@ public class ManageServiceImpl implements ManageService {
                 .provider(provider)
                 .build();
         serviceRepository.save(serviceModel);
+        sendNotification(serviceModel);
         return new ResponseBody<>(SUCCESS, "", "Add service successful");
     }
 
@@ -81,5 +87,34 @@ public class ManageServiceImpl implements ManageService {
                 provider
         );
         return new ResponseBody<>(SUCCESS, "", "Update service successful");
+    }
+
+    public void sendNotification(ServiceModel serviceModel) {
+        String snsTopicArn = ensureTopicExists();
+        String message = "New service added by" + serviceModel.getProvider().getUsername() + ": " + serviceModel.getName() + ". Check it out now!";
+        PublishRequest publishRequest = PublishRequest.builder()
+                .topicArn(snsTopicArn)
+                .message(message)
+                .subject("ServiceHub - " + serviceModel.getName())
+                .build();
+
+        snsClient.publish(publishRequest);
+    }
+
+    private String ensureTopicExists() {
+        String topicArnPrefix = "arn:aws:sns:" + awsProperties.region + ":" + awsProperties.accountId + ":";
+        String topicName = "ServiceHubAllUsers";
+        ListTopicsResponse listTopicsResponse = snsClient.listTopics();
+        for (Topic topic : listTopicsResponse.topics()) {
+            if (topic.topicArn().equals(topicArnPrefix + topicName)) {
+                return topic.topicArn();
+            }
+        }
+
+        CreateTopicRequest createTopicRequest = CreateTopicRequest.builder()
+                .name(topicName)
+                .build();
+        CreateTopicResponse createTopicResponse = snsClient.createTopic(createTopicRequest);
+        return createTopicResponse.topicArn();
     }
 }

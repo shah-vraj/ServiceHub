@@ -1,5 +1,6 @@
 package com.dalhousie.servicehub.factory.service;
 
+import com.dalhousie.servicehub.config.AwsProperties;
 import com.dalhousie.servicehub.factory.mapper.MapperFactory;
 import com.dalhousie.servicehub.factory.repository.RepositoryFactory;
 import com.dalhousie.servicehub.factory.util.UtilFactory;
@@ -33,6 +34,8 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.stereotype.Component;
+import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.sns.SnsClient;
 
 /**
  * Implementation class for ServiceFactory.
@@ -74,6 +77,11 @@ public class ServiceFactoryImpl implements ServiceFactory {
     private ManageService manageService;
     private WishlistService wishlistService;
     private final UserDetailsService userDetailsService;
+
+    // AWS
+    private final S3Client s3Client;
+    private final SnsClient snsClient;
+    private final AwsProperties awsProperties;
 
     @Override
     public BlackListTokenService getBlackListTokenService() {
@@ -130,7 +138,7 @@ public class ServiceFactoryImpl implements ServiceFactory {
     @Override
     public FileUploadService getFileUploadService() {
         if (fileUploadService == null) {
-            fileUploadService = new FileUploadServiceImpl(uploadPath, utilFactory.getFileHelper());
+            fileUploadService = new FileUploadServiceImpl(s3Client, awsProperties);
         }
         return fileUploadService;
     }
@@ -180,7 +188,9 @@ public class ServiceFactoryImpl implements ServiceFactory {
                     utilFactory.getEmailSender(),
                     getResetPasswordTokenService(),
                     utilFactory.getAuthenticationManager(),
-                    getBlackListTokenService());
+                    getBlackListTokenService(),
+                    snsClient,
+                    awsProperties);
         }
         return userService;
     }
@@ -190,7 +200,9 @@ public class ServiceFactoryImpl implements ServiceFactory {
         if (manageService == null) {
             manageService = new ManageServiceImpl(repositoryFactory.getServiceRepository(),
                     repositoryFactory.getUserRepository(),
-                    mapperFactory.getServiceMapper());
+                    mapperFactory.getServiceMapper(),
+                    snsClient,
+                    awsProperties);
         }
         return manageService;
     }

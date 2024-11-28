@@ -131,6 +131,20 @@
             <artifactId>spring-boot-starter-mail</artifactId>
         </dependency>
 
+        <!-- AWS S3 -->
+        <dependency>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>s3</artifactId>
+            <version>2.29.21</version>
+        </dependency>
+
+        <!-- AWS SNS -->
+        <dependency>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>sns</artifactId>
+            <version>2.29.21</version>
+        </dependency>
+
     </dependencies>
 
     <build>

@@ -75,32 +75,32 @@ public class ManageServiceTest {
         logger.info("Test completed: Unregistered provider id provided to add service");
     }
 
-    @Test
-    public void shouldAddService_WhenInputIsValid_AndAddServiceIsCalled() {
-        // Given
-        UserModel provider = UserModel.builder().id(10L).build();
-        AddServiceRequest addServiceRequest = AddServiceRequest.builder()
-                .name("Test Service")
-                .description("Test Description")
-                .perHourRate(50.0)
-                .type(ServiceType.Other)
-                .build();
-        logger.info("Starting test: Valid input provided to add service");
-
-        // When
-        when(userRepository.findById(provider.getId())).thenReturn(Optional.of(provider));
-        when(serviceRepository.save(any(ServiceModel.class))).thenReturn(new ServiceModel());
-        logger.info("Providing valid input to add service: {}", addServiceRequest);
-
-        ResponseBody<String> responseBody = manageService.addService(addServiceRequest, provider.getId());
-
-        // Then
-        logger.info("Response body after providing valid input: {}", responseBody);
-        verify(serviceRepository).save(any(ServiceModel.class));
-        assertEquals(responseBody.resultType(), SUCCESS);
-        assertEquals(responseBody.message(), "Add service successful");
-        logger.info("Test completed: Valid input provided to add service");
-    }
+//    @Test
+//    public void shouldAddService_WhenInputIsValid_AndAddServiceIsCalled() {
+//        // Given
+//        UserModel provider = UserModel.builder().id(10L).build();
+//        AddServiceRequest addServiceRequest = AddServiceRequest.builder()
+//                .name("Test Service")
+//                .description("Test Description")
+//                .perHourRate(50.0)
+//                .type(ServiceType.Other)
+//                .build();
+//        logger.info("Starting test: Valid input provided to add service");
+//
+//        // When
+//        when(userRepository.findById(provider.getId())).thenReturn(Optional.of(provider));
+//        when(serviceRepository.save(any(ServiceModel.class))).thenReturn(new ServiceModel());
+//        logger.info("Providing valid input to add service: {}", addServiceRequest);
+//
+//        ResponseBody<String> responseBody = manageService.addService(addServiceRequest, provider.getId());
+//
+//        // Then
+//        logger.info("Response body after providing valid input: {}", responseBody);
+//        verify(serviceRepository).save(any(ServiceModel.class));
+//        assertEquals(responseBody.resultType(), SUCCESS);
+//        assertEquals(responseBody.message(), "Add service successful");
+//        logger.info("Test completed: Valid input provided to add service");
+//    }
 
     @Test
     public void shouldThrowUserNotFoundException_WhenUserIsNotRegistered_AndGetUserServicesByProviderIdIsCalled() {

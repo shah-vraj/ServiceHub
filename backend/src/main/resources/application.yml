@@ -21,9 +21,9 @@ spring:
           starttls:
             enable: true
   datasource:
-    url: jdbc:mysql://db-5308.cs.dal.ca/CSCI5308_8_PRODUCTION?useSSL=false&allowPublicKeyRetrieval=true
-    username: CSCI5308_8_PRODUCTION_USER
-    password: Aneisiru6b
+    url: ${DB_URL}
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
     driver-class-name: com.mysql.cj.jdbc.Driver
   application:
     name: ServiceHub
@@ -50,3 +50,12 @@ springdoc:
   swagger-ui:
     operations-sorter: method
     enabled: true
+
+aws:
+  s3:
+    account-id: ${AWS_ACCOUNT_ID}
+    bucket-name: ${S3_BUCKET_NAME}
+    region: ${AWS_REGION}
+    access-key: ${AWS_ACCESS}
+    secret-key: ${AWS_SECRET}
+    session-token: ${AWS_SESSION_TOKEN}

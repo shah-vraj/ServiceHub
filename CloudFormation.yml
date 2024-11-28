@@ -1,0 +1,319 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: CloudFormation template for EC2, RDS, S3 with VPC Endpoint for private access.
+
+Parameters:
+  VPCName:
+    Type: String
+    Default: ServiceHubVPC
+    Description: Name of the VPC
+
+  DBInstanceIdentifier:
+    Type: String
+    Default: servicehub-db
+    Description: RDS database instance identifier
+
+  DBName:
+    Type: String
+    Default: servicehubdb
+    Description: Name of the database to create
+
+  DBUsername:
+    Type: String
+    Default: admin
+    Description: Master username for RDS
+
+  DBPassword:
+    Type: String
+    NoEcho: true
+    Default: Admin_123
+    Description: Master password for RDS
+
+  DBAllocatedStorage:
+    Type: Number
+    Default: 10
+    Description: Allocated storage size for the database (in GB)
+
+  DBInstanceClass:
+    Type: String
+    Default: db.t3.micro
+    Description: RDS instance class
+
+  Engine:
+    Type: String
+    Default: mysql
+    AllowedValues:
+      - mysql
+      - postgres
+    Description: Database engine type
+
+  ECRImageUri:
+    Type: String
+    Default: 253860801393.dkr.ecr.us-east-1.amazonaws.com/servicehub:latest
+    Description: URI of the container image in ECR
+
+  KeyName:
+    Type: String
+    Default: TermProject
+    Description: Name of an existing EC2 KeyPair to enable SSH access
+
+  S3BucketName:
+    Type: String
+    Default: servicehub-images
+    Description: Name of the S3 bucket for storing images
+
+Resources:
+  MyVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: !Ref VPCName
+
+  PublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref MyVPC
+      CidrBlock: 10.0.1.0/24
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: !Select [0, !GetAZs ""]
+
+  PrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref MyVPC
+      CidrBlock: 10.0.2.0/24
+      AvailabilityZone: !Select [0, !GetAZs ""]
+
+  PrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref MyVPC
+      CidrBlock: 10.0.3.0/24
+      AvailabilityZone: !Select [1, !GetAZs ""]
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+
+  AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref MyVPC
+      InternetGatewayId: !Ref InternetGateway
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref MyVPC
+
+  PublicRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet
+      RouteTableId: !Ref PublicRouteTable
+
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref MyVPC
+
+  PrivateRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NATGateway
+
+  PrivateSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet1
+      RouteTableId: !Ref PrivateRouteTable
+
+  PrivateSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet2
+      RouteTableId: !Ref PrivateRouteTable
+
+  ElasticIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+
+  NATGateway:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt ElasticIP.AllocationId
+      SubnetId: !Ref PublicSubnet
+
+  RDSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow database access from EC2
+      VpcId: !Ref MyVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          SourceSecurityGroupId: !Ref EC2SecurityGroup
+
+  DBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Subnets for RDS
+      SubnetIds:
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+
+  RDSInstance:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBInstanceIdentifier: !Ref DBInstanceIdentifier
+      AllocatedStorage: !Ref DBAllocatedStorage
+      DBInstanceClass: !Ref DBInstanceClass
+      Engine: !Ref Engine
+      MasterUsername: !Ref DBUsername
+      MasterUserPassword: !Ref DBPassword
+      DBName: !Ref DBName
+      VPCSecurityGroups:
+        - !GetAtt RDSSecurityGroup.GroupId
+      DBSubnetGroupName: !Ref DBSubnetGroup
+
+  EC2SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow SSH and HTTP access to EC2
+      VpcId: !Ref MyVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 8080
+          ToPort: 8080
+          CidrIp: 0.0.0.0/0
+
+  EC2Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t2.micro
+      KeyName: !Ref KeyName
+      SecurityGroupIds:
+        - !Ref EC2SecurityGroup
+      SubnetId: !Ref PublicSubnet
+      ImageId: ami-0166fe664262f664c
+      IamInstanceProfile: LabInstanceProfile
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          sudo yum update -y
+          sudo amazon-linux-extras enable docker
+          sudo yum install -y docker aws-cli
+          sudo systemctl start docker
+          sudo systemctl enable docker
+          sudo service docker start
+          aws ecr get-login-password --region ${AWS::Region} | docker login --username AWS --password-stdin ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com
+          docker pull ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/servicehub:latest
+          docker run -d -p 8080:8080 \
+            -e DB_URL=jdbc:mysql://${RDSInstance.Endpoint.Address}:3306/${DBName} \
+            -e DB_USERNAME=${DBUsername} \
+            -e DB_PASSWORD=${DBPassword} \
+            -e S3_BUCKET_NAME=${S3BucketName} \
+            -e AWS_ACCOUNT_ID=${AWS::AccountId} \
+            -e AWS_REGION=${AWS::Region} \
+            -e AWS_ACCESS=<UPDATE_ACCESS_KEY_HERE> \
+            -e AWS_SECRET=<UPDATE_SECRET_KEY_HERE> \
+            -e AWS_SESSION_TOKEN=<UPDATE_SESSION_TOKEN_HERE> \
+            ${ECRImageUri}
+
+  S3Bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref S3BucketName
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: false
+        BlockPublicPolicy: false
+        IgnorePublicAcls: false
+        RestrictPublicBuckets: false
+
+  S3BucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref S3Bucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: PublicReadGetObject
+            Effect: Allow
+            Principal: '*'
+            Action: 's3:*'
+            Resource:
+              Fn::Sub: 'arn:aws:s3:::${S3BucketName}/*'
+
+  S3VPCEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.s3"
+      VpcId: !Ref MyVPC
+      RouteTableIds:
+        - !Ref PublicRouteTable
+
+Outputs:
+  VPCId:
+    Description: ID of the created VPC
+    Value: !Ref MyVPC
+    Export:
+      Name: ServiceHubVPCId
+
+  PublicSubnetId:
+    Description: ID of the public subnet
+    Value: !Ref PublicSubnet
+    Export:
+      Name: ServiceHubPublicSubnetId
+
+  PrivateSubnet1Id:
+    Description: ID of the private subnet 1
+    Value: !Ref PrivateSubnet1
+    Export:
+      Name: ServiceHubPrivateSubnet1Id
+
+  PrivateSubnet2Id:
+    Description: ID of the private subnet 2
+    Value: !Ref PrivateSubnet2
+    Export:
+      Name: ServiceHubPrivateSubnet2Id
+
+  EC2PublicIP:
+    Description: Public IP address of the EC2 instance
+    Value: !GetAtt EC2Instance.PublicIp
+    Export:
+      Name: ServiceHubEC2PublicIP
+
+  RDSInstanceEndpoint:
+    Description: Endpoint of the RDS instance
+    Value: !GetAtt RDSInstance.Endpoint.Address
+    Export:
+      Name: ServiceHubRDSInstanceEndpoint
+
+  S3BucketName:
+    Description: Name of the S3 bucket
+    Value: !Ref S3Bucket
+    Export:
+      Name: ServiceHubS3BucketName
+
+  S3VPCEndpointId:
+    Description: ID of the S3 VPC endpoint
+    Value: !Ref S3VPCEndpoint
+    Export:
+      Name: ServiceHubS3VPCEndpointId

@@ -1,5 +1,6 @@
 package com.dalhousie.servicehub.service.user;
 
+import com.dalhousie.servicehub.config.AwsProperties;
 import com.dalhousie.servicehub.exceptions.InvalidTokenException;
 import com.dalhousie.servicehub.exceptions.UserAlreadyExistException;
 import com.dalhousie.servicehub.exceptions.UserNotFoundException;
@@ -22,6 +23,8 @@ import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import software.amazon.awssdk.services.sns.SnsClient;
+import software.amazon.awssdk.services.sns.model.*;
 
 import java.util.Objects;
 
@@ -38,6 +41,8 @@ public class UserServiceImpl implements UserService {
     private final ResetPasswordTokenService resetPasswordTokenService;
     private final AuthenticationManager authenticationManager;
     private final BlackListTokenService blackListTokenService;
+    private final SnsClient snsClient;
+    private final AwsProperties awsProperties;
 
     @Override
     public ResponseBody<AuthenticationResponse> registerUser(RegisterRequest registerRequest) {
@@ -52,6 +57,7 @@ public class UserServiceImpl implements UserService {
                 .image(registerRequest.getImage())
                 .build();
         repository.save(userModel);
+        subscribeToEventNotifications(registerRequest.getEmail());
         var jwtToken = jwtService.generateToken(userModel);
         AuthenticationResponse authenticationResponse = AuthenticationResponse.builder()
                 .token(jwtToken)
@@ -115,6 +121,7 @@ public class UserServiceImpl implements UserService {
 
     /**
      * Provides the URL for resetting password
+     *
      * @param request HttpServletRequest instance
      * @return String representing URL to reset password
      */
@@ -131,8 +138,9 @@ public class UserServiceImpl implements UserService {
 
     /**
      * Sends the mail for resetting password to requesting email with provided reset password link
+     *
      * @param resetPasswordLink String representing link to reset password
-     * @param email Email of the user
+     * @param email             Email of the user
      */
     private void sendMail(String resetPasswordLink, String email) {
         String subject = "Reset your password";
@@ -144,5 +152,33 @@ public class UserServiceImpl implements UserService {
         } catch (Exception exception) {
             throw new RuntimeException(exception.getMessage());
         }
+    }
+
+    public void subscribeToEventNotifications(String email) {
+        String snsTopicArn = ensureTopicExists();
+        SubscribeRequest subscribeRequest = SubscribeRequest.builder()
+                .protocol("email")
+                .endpoint(email)
+                .topicArn(snsTopicArn)
+                .build();
+
+        snsClient.subscribe(subscribeRequest);
+    }
+
+    private String ensureTopicExists() {
+        String topicArnPrefix = "arn:aws:sns:" + awsProperties.region + ":" + awsProperties.accountId + ":";
+        String topicName = "ServiceHubAllUsers";
+        ListTopicsResponse listTopicsResponse = snsClient.listTopics();
+        for (Topic topic : listTopicsResponse.topics()) {
+            if (topic.topicArn().equals(topicArnPrefix + topicName)) {
+                return topic.topicArn();
+            }
+        }
+
+        CreateTopicRequest createTopicRequest = CreateTopicRequest.builder()
+                .name(topicName)
+                .build();
+        CreateTopicResponse createTopicResponse = snsClient.createTopic(createTopicRequest);
+        return createTopicResponse.topicArn();
     }
 }
