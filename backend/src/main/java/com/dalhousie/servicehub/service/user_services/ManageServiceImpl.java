@@ -91,7 +91,7 @@ public class ManageServiceImpl implements ManageService {
 
     public void sendNotification(ServiceModel serviceModel) {
         String snsTopicArn = ensureTopicExists();
-        String message = "New service added by" + serviceModel.getProvider().getUsername() + ": " + serviceModel.getName() + ". Check it out now!";
+        String message = "New service added by " + serviceModel.getProvider().getUsername() + ": " + serviceModel.getName() + ". Check it out now!";
         PublishRequest publishRequest = PublishRequest.builder()
                 .topicArn(snsTopicArn)
                 .message(message)

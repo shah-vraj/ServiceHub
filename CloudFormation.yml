@@ -46,10 +46,15 @@ Parameters:
       - postgres
     Description: Database engine type
 
-  ECRImageUri:
+  BackendECRImageUri:
     Type: String
     Default: 253860801393.dkr.ecr.us-east-1.amazonaws.com/servicehub:latest
-    Description: URI of the container image in ECR
+    Description: URI of the backend container image in ECR
+
+  FrontendECRImageUri:
+    Type: String
+    Default: 253860801393.dkr.ecr.us-east-1.amazonaws.com/servicehub-frontend:latest
+    Description: URI of the frontend container image in ECR
 
   KeyName:
     Type: String
@@ -203,11 +208,15 @@ Resources:
           FromPort: 8080
           ToPort: 8080
           CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 3000
+          ToPort: 3000
+          CidrIp: 0.0.0.0/0
 
   EC2Instance:
     Type: AWS::EC2::Instance
     Properties:
-      InstanceType: t2.micro
+      InstanceType: t2.medium
       KeyName: !Ref KeyName
       SecurityGroupIds:
         - !Ref EC2SecurityGroup
@@ -223,8 +232,15 @@ Resources:
           sudo systemctl start docker
           sudo systemctl enable docker
           sudo service docker start
+          
+          # Login
           aws ecr get-login-password --region ${AWS::Region} | docker login --username AWS --password-stdin ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com
-          docker pull ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/servicehub:latest
+          
+          # Pull images
+          docker pull ${BackendECRImageUri}
+          docker pull ${FrontendECRImageUri}
+          
+          # Run backend
           docker run -d -p 8080:8080 \
             -e DB_URL=jdbc:mysql://${RDSInstance.Endpoint.Address}:3306/${DBName} \
             -e DB_USERNAME=${DBUsername} \
@@ -232,10 +248,15 @@ Resources:
             -e S3_BUCKET_NAME=${S3BucketName} \
             -e AWS_ACCOUNT_ID=${AWS::AccountId} \
             -e AWS_REGION=${AWS::Region} \
-            -e AWS_ACCESS=<UPDATE_ACCESS_KEY_HERE> \
-            -e AWS_SECRET=<UPDATE_SECRET_KEY_HERE> \
-            -e AWS_SESSION_TOKEN=<UPDATE_SESSION_TOKEN_HERE> \
-            ${ECRImageUri}
+            -e AWS_ACCESS=<ACCESS_KEY> \
+            -e AWS_SECRET=<SECRET_KEY> \
+            -e AWS_SESSION_TOKEN=<SESSION_TOKEN> \
+            ${BackendECRImageUri}
+          
+          # Run frontend
+          docker run -d -p 3000:3000 \
+            -e REACT_APP_SERVER_URL=http://$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4):8080 \
+            ${FrontendECRImageUri}
 
   S3Bucket:
     Type: AWS::S3::Bucket
