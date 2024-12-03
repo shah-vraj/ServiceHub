@@ -20,7 +20,8 @@ public class SecurityConfig {
             "/swagger-ui/**", // Swagger domain to get API overview
             "/v3/api-docs/**", // Swagger domain to get API documentation
             "/swagger-ui.html", // Swagger domain to get API testing homepage
-            "/public/uploads/**" // Public uploads domain where user can load images/files
+            "/public/uploads/**", // Public uploads domain where user can load images/files
+            "/actuator/health" // Health check API
     };
 
     private final JwtAuthenticationFilter jwtAuthenticationFilter;

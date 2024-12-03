@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: "2010-09-09"
-Description: CloudFormation template for EC2, RDS, S3 with VPC Endpoint for private access.
+Description: ServiceHub cloud formation template using ALB, EC2, ECR, S3, RDS, SNS, VPC, and CloudFormation.
 
 Parameters:
   VPCName:
@@ -67,7 +67,8 @@ Parameters:
     Description: Name of the S3 bucket for storing images
 
 Resources:
-  MyVPC:
+  # VPC
+  ServiceHubVPC:
     Type: AWS::EC2::VPC
     Properties:
       CidrBlock: 10.0.0.0/16
@@ -77,41 +78,63 @@ Resources:
         - Key: Name
           Value: !Ref VPCName
 
-  PublicSubnet:
+  # Internet gateway
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+
+  InternetGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref ServiceHubVPC
+      InternetGatewayId: !Ref InternetGateway
+
+  # Subnets
+  PublicSubnet1:
     Type: AWS::EC2::Subnet
     Properties:
-      VpcId: !Ref MyVPC
+      VpcId: !Ref ServiceHubVPC
       CidrBlock: 10.0.1.0/24
       MapPublicIpOnLaunch: true
       AvailabilityZone: !Select [0, !GetAZs ""]
 
+  PublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref ServiceHubVPC
+      CidrBlock: 10.0.2.0/24
+      AvailabilityZone: !Select [1, !GetAZs ""]
+
   PrivateSubnet1:
     Type: AWS::EC2::Subnet
     Properties:
-      VpcId: !Ref MyVPC
-      CidrBlock: 10.0.2.0/24
+      VpcId: !Ref ServiceHubVPC
+      CidrBlock: 10.0.3.0/24
       AvailabilityZone: !Select [0, !GetAZs ""]
 
   PrivateSubnet2:
     Type: AWS::EC2::Subnet
     Properties:
-      VpcId: !Ref MyVPC
-      CidrBlock: 10.0.3.0/24
+      VpcId: !Ref ServiceHubVPC
+      CidrBlock: 10.0.4.0/24
       AvailabilityZone: !Select [1, !GetAZs ""]
 
-  InternetGateway:
-    Type: AWS::EC2::InternetGateway
-
-  AttachGateway:
-    Type: AWS::EC2::VPCGatewayAttachment
-    Properties:
-      VpcId: !Ref MyVPC
-      InternetGatewayId: !Ref InternetGateway
-
+  # Public route
   PublicRouteTable:
     Type: AWS::EC2::RouteTable
     Properties:
-      VpcId: !Ref MyVPC
+      VpcId: !Ref ServiceHubVPC
+
+  PublicSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet1
+      RouteTableId: !Ref PublicRouteTable
+
+  PublicSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet2
+      RouteTableId: !Ref PublicRouteTable
 
   PublicRoute:
     Type: AWS::EC2::Route
@@ -120,23 +143,11 @@ Resources:
       DestinationCidrBlock: 0.0.0.0/0
       GatewayId: !Ref InternetGateway
 
-  PublicSubnetRouteTableAssociation:
-    Type: AWS::EC2::SubnetRouteTableAssociation
-    Properties:
-      SubnetId: !Ref PublicSubnet
-      RouteTableId: !Ref PublicRouteTable
-
+  # Private route
   PrivateRouteTable:
     Type: AWS::EC2::RouteTable
     Properties:
-      VpcId: !Ref MyVPC
-
-  PrivateRoute:
-    Type: AWS::EC2::Route
-    Properties:
-      RouteTableId: !Ref PrivateRouteTable
-      DestinationCidrBlock: 0.0.0.0/0
-      NatGatewayId: !Ref NATGateway
+      VpcId: !Ref ServiceHubVPC
 
   PrivateSubnet1RouteTableAssociation:
     Type: AWS::EC2::SubnetRouteTableAssociation
@@ -150,6 +161,13 @@ Resources:
       SubnetId: !Ref PrivateSubnet2
       RouteTableId: !Ref PrivateRouteTable
 
+  PrivateRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NATGateway
+
   ElasticIP:
     Type: AWS::EC2::EIP
     Properties:
@@ -159,19 +177,9 @@ Resources:
     Type: AWS::EC2::NatGateway
     Properties:
       AllocationId: !GetAtt ElasticIP.AllocationId
-      SubnetId: !Ref PublicSubnet
+      SubnetId: !Ref PublicSubnet1
 
-  RDSSecurityGroup:
-    Type: AWS::EC2::SecurityGroup
-    Properties:
-      GroupDescription: Allow database access from EC2
-      VpcId: !Ref MyVPC
-      SecurityGroupIngress:
-        - IpProtocol: tcp
-          FromPort: 3306
-          ToPort: 3306
-          SourceSecurityGroupId: !Ref EC2SecurityGroup
-
+  # RDS subnet group
   DBSubnetGroup:
     Type: AWS::RDS::DBSubnetGroup
     Properties:
@@ -180,6 +188,19 @@ Resources:
         - !Ref PrivateSubnet1
         - !Ref PrivateSubnet2
 
+  # RDS security group
+  RDSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow database access from EC2
+      VpcId: !Ref ServiceHubVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          SourceSecurityGroupId: !Ref LaunchTemplateSecurityGroup
+
+  # RDS instance
   RDSInstance:
     Type: AWS::RDS::DBInstance
     Properties:
@@ -194,15 +215,147 @@ Resources:
         - !GetAtt RDSSecurityGroup.GroupId
       DBSubnetGroupName: !Ref DBSubnetGroup
 
-  EC2SecurityGroup:
+  # Target group
+  BackendTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: backend-target-group
+      Port: 8080
+      Protocol: HTTP
+      TargetType: instance
+      VpcId: !Ref ServiceHubVPC
+      HealthCheckPort: "8080"
+      HealthCheckPath: /actuator/health
+      HealthCheckIntervalSeconds: 30
+      HealthCheckTimeoutSeconds: 20
+      Matcher:
+        HttpCode: '200'
+      Tags:
+        - Key: Name
+          Value: backend-target-group
+
+  FrontendTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: frontend-target-group
+      Port: 3000
+      Protocol: HTTP
+      TargetType: instance
+      VpcId: !Ref ServiceHubVPC
+      HealthCheckPort: "3000"
+      HealthCheckPath: /
+      HealthCheckIntervalSeconds: 30
+      HealthCheckTimeoutSeconds: 20
+      Matcher:
+        HttpCode: '200'
+      Tags:
+        - Key: Name
+          Value: frontend-target-group
+
+  # Load balancer security group
+  BackendLoadBalancerSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: Allow SSH and HTTP access to EC2
-      VpcId: !Ref MyVPC
+      GroupName: backend-load-balancer-sg
+      GroupDescription: Enable SSH access and HTTP via port 80
+      VpcId: !Ref ServiceHubVPC
       SecurityGroupIngress:
         - IpProtocol: tcp
           FromPort: 22
           ToPort: 22
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 8080
+          ToPort: 8080
+          CidrIp: 0.0.0.0/0
+
+  FrontendLoadBalancerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: frontend-load-balancer-sg
+      GroupDescription: Enable SSH access and HTTP via port 80
+      VpcId: !Ref ServiceHubVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 3000
+          ToPort: 3000
+          CidrIp: 0.0.0.0/0
+
+  # Load balancer
+  BackendLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: backend-load-balancer
+      Scheme: internet-facing
+      IpAddressType: ipv4
+      Type: application
+      SecurityGroups:
+        - !Ref BackendLoadBalancerSecurityGroup
+      Subnets:
+        - !Ref PublicSubnet1
+        - !Ref PublicSubnet2
+
+  FrontendLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: frontend-load-balancer
+      Scheme: internet-facing
+      IpAddressType: ipv4
+      Type: application
+      SecurityGroups:
+        - !Ref FrontendLoadBalancerSecurityGroup
+      Subnets:
+        - !Ref PublicSubnet1
+        - !Ref PublicSubnet2
+
+  # Load balancer listener
+  BackendLoadBalancerListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref BackendTargetGroup
+      LoadBalancerArn: !Ref BackendLoadBalancer
+      Port: 80
+      Protocol: HTTP
+
+  FrontendLoadBalancerListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref FrontendTargetGroup
+      LoadBalancerArn: !Ref FrontendLoadBalancer
+      Port: 80
+      Protocol: HTTP
+
+  # Launch template security group
+  LaunchTemplateSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: servicehub-launch-template-sg
+      GroupDescription: Security group for launch template
+      VpcId: !Ref ServiceHubVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
           CidrIp: 0.0.0.0/0
         - IpProtocol: tcp
           FromPort: 8080
@@ -213,51 +366,148 @@ Resources:
           ToPort: 3000
           CidrIp: 0.0.0.0/0
 
-  EC2Instance:
-    Type: AWS::EC2::Instance
+  # Instance profile
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
     Properties:
-      InstanceType: t2.medium
-      KeyName: !Ref KeyName
-      SecurityGroupIds:
-        - !Ref EC2SecurityGroup
-      SubnetId: !Ref PublicSubnet
-      ImageId: ami-0166fe664262f664c
-      IamInstanceProfile: LabInstanceProfile
-      UserData:
-        Fn::Base64: !Sub |
-          #!/bin/bash
-          sudo yum update -y
-          sudo amazon-linux-extras enable docker
-          sudo yum install -y docker aws-cli
-          sudo systemctl start docker
-          sudo systemctl enable docker
-          sudo service docker start
-          
-          # Login
-          aws ecr get-login-password --region ${AWS::Region} | docker login --username AWS --password-stdin ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com
-          
-          # Pull images
-          docker pull ${BackendECRImageUri}
-          docker pull ${FrontendECRImageUri}
-          
-          # Run backend
-          docker run -d -p 8080:8080 \
-            -e DB_URL=jdbc:mysql://${RDSInstance.Endpoint.Address}:3306/${DBName} \
-            -e DB_USERNAME=${DBUsername} \
-            -e DB_PASSWORD=${DBPassword} \
-            -e S3_BUCKET_NAME=${S3BucketName} \
-            -e AWS_ACCOUNT_ID=${AWS::AccountId} \
-            -e AWS_REGION=${AWS::Region} \
-            -e AWS_ACCESS=<ACCESS_KEY> \
-            -e AWS_SECRET=<SECRET_KEY> \
-            -e AWS_SESSION_TOKEN=<SESSION_TOKEN> \
-            ${BackendECRImageUri}
-          
-          # Run frontend
-          docker run -d -p 3000:3000 \
-            -e REACT_APP_SERVER_URL=http://$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4):8080 \
-            ${FrontendECRImageUri}
+      Roles:
+        - LabRole
 
+  # Launch template
+  BackendLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: backend-launch-template
+      LaunchTemplateData:
+        ImageId: ami-0166fe664262f664c
+        InstanceType: t2.micro
+        IamInstanceProfile:
+          Arn: !GetAtt InstanceProfile.Arn
+        NetworkInterfaces:
+          - AssociatePublicIpAddress: true
+            DeviceIndex: 0
+            Groups:
+              - !Ref LaunchTemplateSecurityGroup
+        UserData:
+          Fn::Base64: !Sub |
+            #!/bin/bash
+            sudo yum update -y
+            sudo amazon-linux-extras enable docker
+            sudo yum install -y docker aws-cli
+            sudo systemctl start docker
+            sudo systemctl enable docker
+            sudo service docker start
+            
+            # Login
+            aws ecr get-login-password --region ${AWS::Region} | docker login --username AWS --password-stdin ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com
+            
+            # Pull image
+            docker pull ${BackendECRImageUri}
+            
+            # Run
+            docker run -d -p 8080:8080 \
+              -e DB_URL=jdbc:mysql://${RDSInstance.Endpoint.Address}:3306/${DBName} \
+              -e DB_USERNAME=${DBUsername} \
+              -e DB_PASSWORD=${DBPassword} \
+              -e S3_BUCKET_NAME=${S3BucketName} \
+              -e AWS_ACCOUNT_ID=${AWS::AccountId} \
+              -e AWS_REGION=${AWS::Region} \
+              -e AWS_ACCESS=<ACCESS_KEY> \
+              -e AWS_SECRET=<SECRET_KEY> \
+              -e AWS_SESSION_TOKEN=<SESSION_TOKEN> \
+              ${BackendECRImageUri}
+      TagSpecifications:
+        - ResourceType: launch-template
+          Tags:
+            - Key: Name
+              Value: backend-launch-template
+
+  FrontendLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: frontend-launch-template
+      LaunchTemplateData:
+        ImageId: ami-0166fe664262f664c
+        InstanceType: t2.medium
+        IamInstanceProfile:
+          Arn: !GetAtt InstanceProfile.Arn
+        NetworkInterfaces:
+          - AssociatePublicIpAddress: true
+            DeviceIndex: 0
+            Groups:
+              - !Ref LaunchTemplateSecurityGroup
+        UserData:
+          Fn::Base64: !Sub |
+            #!/bin/bash
+            sudo yum update -y
+            sudo amazon-linux-extras enable docker
+            sudo yum install -y docker aws-cli
+            sudo systemctl start docker
+            sudo systemctl enable docker
+            sudo service docker start
+
+            # Login
+            aws ecr get-login-password --region ${AWS::Region} | docker login --username AWS --password-stdin ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com
+
+            # Pull image
+            docker pull ${FrontendECRImageUri}
+
+            # Run
+            docker run -d -p 3000:3000 \
+              -e REACT_APP_SERVER_URL=http://${BackendLoadBalancer.DNSName} \
+              ${FrontendECRImageUri}
+      TagSpecifications:
+        - ResourceType: launch-template
+          Tags:
+            - Key: Name
+              Value: backend-launch-template
+
+  # Auto-scaling group
+  BackendAutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      AutoScalingGroupName: backend-auto-scaling-group
+      VPCZoneIdentifier:
+        - !Ref PublicSubnet1
+        - !Ref PublicSubnet2
+      LaunchTemplate:
+        LaunchTemplateId: !Ref BackendLaunchTemplate
+        Version: !GetAtt BackendLaunchTemplate.LatestVersionNumber
+      MinSize: 1
+      MaxSize: 2
+      DesiredCapacity: 1
+      HealthCheckType: ELB
+      HealthCheckGracePeriod: 500
+      TargetGroupARNs:
+        - !Ref BackendTargetGroup
+      Tags:
+        - Key: Name
+          Value: backend-auto-scaling-group
+          PropagateAtLaunch: true
+
+  FrontendAutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      AutoScalingGroupName: frontend-auto-scaling-group
+      VPCZoneIdentifier:
+        - !Ref PublicSubnet1
+        - !Ref PublicSubnet2
+      LaunchTemplate:
+        LaunchTemplateId: !Ref FrontendLaunchTemplate
+        Version: !GetAtt FrontendLaunchTemplate.LatestVersionNumber
+      MinSize: 1
+      MaxSize: 2
+      DesiredCapacity: 1
+      HealthCheckType: ELB
+      HealthCheckGracePeriod: 500
+      TargetGroupARNs:
+        - !Ref FrontendTargetGroup
+      Tags:
+        - Key: Name
+          Value: frontend-auto-scaling-group
+          PropagateAtLaunch: true
+
+  # S3 bucket
   S3Bucket:
     Type: AWS::S3::Bucket
     Properties:
@@ -286,55 +536,13 @@ Resources:
     Type: AWS::EC2::VPCEndpoint
     Properties:
       ServiceName: !Sub "com.amazonaws.${AWS::Region}.s3"
-      VpcId: !Ref MyVPC
+      VpcId: !Ref ServiceHubVPC
       RouteTableIds:
         - !Ref PublicRouteTable
 
 Outputs:
-  VPCId:
-    Description: ID of the created VPC
-    Value: !Ref MyVPC
+  FrontendURL:
+    Description: URL of the Frontend Application
+    Value: !Sub "http://${FrontendLoadBalancer.DNSName}"
     Export:
-      Name: ServiceHubVPCId
-
-  PublicSubnetId:
-    Description: ID of the public subnet
-    Value: !Ref PublicSubnet
-    Export:
-      Name: ServiceHubPublicSubnetId
-
-  PrivateSubnet1Id:
-    Description: ID of the private subnet 1
-    Value: !Ref PrivateSubnet1
-    Export:
-      Name: ServiceHubPrivateSubnet1Id
-
-  PrivateSubnet2Id:
-    Description: ID of the private subnet 2
-    Value: !Ref PrivateSubnet2
-    Export:
-      Name: ServiceHubPrivateSubnet2Id
-
-  EC2PublicIP:
-    Description: Public IP address of the EC2 instance
-    Value: !GetAtt EC2Instance.PublicIp
-    Export:
-      Name: ServiceHubEC2PublicIP
-
-  RDSInstanceEndpoint:
-    Description: Endpoint of the RDS instance
-    Value: !GetAtt RDSInstance.Endpoint.Address
-    Export:
-      Name: ServiceHubRDSInstanceEndpoint
-
-  S3BucketName:
-    Description: Name of the S3 bucket
-    Value: !Ref S3Bucket
-    Export:
-      Name: ServiceHubS3BucketName
-
-  S3VPCEndpointId:
-    Description: ID of the S3 VPC endpoint
-    Value: !Ref S3VPCEndpoint
-    Export:
-      Name: ServiceHubS3VPCEndpointId
+      Name: !Sub "${AWS::StackName}-FrontendURL"
